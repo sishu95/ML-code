@@ -14,7 +14,7 @@ from sklearn.linear_model import Ridge, RidgeCV
 plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'DejaVu Sans']
 plt.rcParams['axes.unicode_minus'] = False
 
-data = pd.read_csv("/data/users/lsy/PVK/new/260527/data.csv")
+data = pd.read_csv("/data/users/PVK/data.csv")
 X = data.iloc[:, 0:13].values
 Y = data.iloc[:, 14].values  
 X_new = np.delete(X, [4, 5], axis=1)

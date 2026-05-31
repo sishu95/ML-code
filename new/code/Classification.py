@@ -13,8 +13,6 @@ from sklearn.multiclass import OneVsRestClassifier
 from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.metrics import roc_curve, auc
 
-
-print("=== Step 1: Loading Data ===")
 data = pd.read_csv("/data/users/PVK/data.csv")
 X = data.iloc[:, 0:13].values
 Y = data.iloc[:, 14].values  
@@ -54,8 +52,6 @@ svc_params = {
     'model__gamma': ['scale', 0.1, 1]
 }
 best_svc, svc_best_params = optimize_model(svc_pipe, svc_params, X_train, y_train)
-print("\n=== SVC best ===")
-print(svc_best_params)
 
 rf_pipe = ImbPipeline([
     ('sampler', SMOTE(random_state=42)),
