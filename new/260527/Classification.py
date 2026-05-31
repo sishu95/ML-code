@@ -1,18 +1,20 @@
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
+import shap
 import matplotlib.pyplot as plt
-from sklearn.metrics import roc_curve, auc
-from sklearn.linear_model import LogisticRegression
-from sklearn.preprocessing import label_binarize, StandardScaler
-from imblearn.over_sampling import SMOTE 
-from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
+from sklearn.ensemble import RandomForestClassifier, StackingClassifier
 from xgboost import XGBClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler, label_binarize
+from sklearn.svm import SVC
+from imblearn.over_sampling import SMOTE
 from sklearn.multiclass import OneVsRestClassifier
-from sklearn.ensemble import StackingClassifier
+from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.metrics import roc_curve, auc
 
+
+print("=== Step 1: Loading Data ===")
 data = pd.read_csv("/data/users/PVK/data.csv")
 X = data.iloc[:, 0:13].values
 Y = data.iloc[:, 14].values  
@@ -94,7 +96,7 @@ lr_params = {
 }
 best_lr, lr_best_params = optimize_model(lr_pipe, lr_params, X_train, y_train)
 
-
+custom_weights = {0: 1, 1: 1, 2: 5}
 stacking_clf = StackingClassifier(
     estimators=[
         ('svc', best_svc),
@@ -103,13 +105,11 @@ stacking_clf = StackingClassifier(
         ('lr', best_lr)
     ],
 
-    final_estimator=LogisticRegression(class_weight='balanced', max_iter=1000, random_state=42),  
+    final_estimator=LogisticRegression(class_weight=custom_weights, max_iter=1000, random_state=42),  
     cv=StratifiedKFold(5, shuffle=True, random_state=42), 
     n_jobs=-1,
     passthrough=False 
 )
-
-
 
 stacking_clf.fit(X_train, y_train)
 y_score = stacking_clf.predict_proba(X_test)
@@ -186,3 +186,161 @@ plt.savefig('roc_comparison.png',
            bbox_inches='tight',
            facecolor='white')
 plt.show()
+
+background_data = shap.sample(X_train, 100) 
+explainer = shap.KernelExplainer(stacking_clf.predict_proba, background_data)
+shap_values_all = explainer.shap_values(X_new)
+
+target_class_idx = 2 
+if isinstance(shap_values_all, list):
+    shap_values_target = shap_values_all[target_class_idx]
+else:
+    shap_values_target = shap_values_all
+
+columns = [f'feature{i+1}' for i in range(X_new.shape[1])]
+X_df = pd.DataFrame(X_new, columns=columns)
+
+shap_df = pd.DataFrame(shap_values_target, columns=X_m)
+shap_df.to_csv('shap_values_class2.csv', index=False)
+
+shap.initjs() 
+plt.figure(figsize=(10, 8))
+plt.rcParams['font.sans-serif'] = "Arial" 
+plt.rcParams.update({'font.size': 14}) 
+
+shap.summary_plot(shap_values_target, X_new, plot_type="bar", 
+                feature_names=X_m, show=False)
+plt.tight_layout()
+plt.savefig('shap1_bar.png', dpi=300)
+plt.close()  
+
+plt.rcParams.update({
+    'font.size': 16,           
+    'font.weight': 'bold',      
+    'axes.labelweight': 'bold', 
+    'axes.titleweight': 'bold'  
+})
+
+plt.figure(figsize=(10, 8))
+
+shap.summary_plot(shap_values_target, X_new, plot_type="dot",
+                  feature_names=X_m, show=False)
+
+ax = plt.gca()
+plt.xticks(fontsize=14, weight='bold')
+plt.yticks(fontsize=14, weight='bold')
+
+if ax.get_xlabel():
+    ax.set_xlabel(ax.get_xlabel(), fontsize=18, weight='bold')
+
+plt.tight_layout()
+plt.savefig('shap2_dot.png', dpi=300)
+plt.close()
+
+plt.rcdefaults()
+
+X = pd.DataFrame(X_new, columns=X_m)
+
+plt.rcParams.update({
+    'font.family': 'Arial',
+    'font.size': 22,           
+    'font.weight': 'bold',     
+    'axes.labelweight': 'bold', 
+    'axes.linewidth': 3     
+})
+
+for feature in X_m:
+    plt.figure(figsize=(8, 6))  
+    
+    shap.dependence_plot(
+        feature,         
+        shap_values_target,    
+        X,       
+        interaction_index=None,  
+        show=False,
+        dot_size=40 
+    )
+    
+    ax = plt.gca()
+    
+    if ax.get_xlabel():
+        ax.set_xlabel(ax.get_xlabel(), fontsize=22, fontweight='bold', fontname='Arial')
+    if ax.get_ylabel():
+        ax.set_ylabel(ax.get_ylabel(), fontsize=22, fontweight='bold', fontname='Arial')
+        
+    for item in (ax.get_xticklabels() + ax.get_yticklabels()):
+        item.set_fontname('Arial') 
+        item.set_fontsize(22)
+        item.set_fontweight('bold')
+    
+    ax.tick_params(width=3, length=6)
+        
+    for spine_name in ['top', 'right', 'bottom', 'left']:
+        ax.spines[spine_name].set_visible(True)  
+        ax.spines[spine_name].set_linewidth(3)
+        
+    plt.tight_layout()
+    plt.savefig(f'dependence_{feature}.png', dpi=300)  
+    plt.close()  
+
+plt.rcdefaults() 
+print("All dependence plots have been saved.")
+
+mol_data = pd.read_csv("/data/users/PVK/test.csv")  
+X_mol_raw = mol_data.iloc[:, 0:13].values  
+X_mol = np.delete(X_mol_raw, [4, 5], axis=1) 
+
+mol_proba = stacking_clf.predict_proba(X_mol)
+mol_preds = stacking_clf.predict(X_mol)
+mol_proba_class2 = mol_proba[:, target_class]
+
+try:
+    mol_names = mol_data['Name'].values
+except KeyError:
+    mol_names = mol_data.iloc[:, -1].values
+
+mol_results = pd.DataFrame({
+    "SampleID": mol_names,  
+    "Predicted_Label": mol_preds,
+    "Class2_Probability": mol_proba_class2
+})
+mol_results_sorted = mol_results.sort_values(by="Class2_Probability", ascending=False)
+mol_results_sorted.to_csv("1mol_class2_probabilities_named.csv", index=False)
+
+explainer_proba = shap.KernelExplainer(stacking_clf.predict_proba, background_data)
+shap_values_mol = explainer_proba.shap_values(X_mol)
+
+for i in range(len(X_mol)):
+    pred_class = mol_preds[i]
+    class2_prob = mol_proba_class2[i]
+
+    if isinstance(shap_values_mol, list):
+        current_shap_value = shap_values_mol[pred_class][i]
+        current_base_value = explainer_proba.expected_value[pred_class]
+    else:
+        current_shap_value = shap_values_mol[i]
+        current_base_value = explainer_proba.expected_value
+    
+    force_plot_html = shap.force_plot(
+        base_value=current_base_value,
+        shap_values=current_shap_value,
+        features=X_mol[i],
+        feature_names=X_m,
+        matplotlib=False,
+        show=False
+    )
+    shap.save_html(f"MOL_force_plot_sample_{i}_class2_{class2_prob:.2f}.html", force_plot_html)
+
+    plt.figure()
+    shap.force_plot(
+        base_value=current_base_value,
+        shap_values=current_shap_value,
+        features=X_mol[i],
+        feature_names=X_m,
+        matplotlib=True,
+        show=False 
+    )
+    plt.title(f"Sample {i} | Pred: Class {pred_class} | Class 2 Prob: {class2_prob:.2f}", fontsize=12, pad=20)
+    plt.tight_layout()
+    plt.savefig(f"MOL_force_plot_sample_{i}_class2_{class2_prob:.2f}.png", dpi=300, bbox_inches='tight')
+    plt.close()
